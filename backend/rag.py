@@ -1,9 +1,27 @@
+# ================================
+# AI Resume Analyzer - RAG Module
+# Uses Hugging Face DistilGPT2 + FAISS
+# ================================
+
 from sentence_transformers import SentenceTransformer
 import faiss
 import numpy as np
+from transformers import pipeline
 
-# Load embedding model
-model = SentenceTransformer('all-MiniLM-L6-v2')
+# -------------------------------
+# Load embedding model (Hugging Face)
+# -------------------------------
+embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
+
+# -------------------------------
+# Load lightweight LLM (DistilGPT2)
+# Suitable for 4GB RAM systems
+# -------------------------------
+generator = pipeline("text-generation", model="distilgpt2")
+
+# -------------------------------
+# Vector Store Class
+# -------------------------------
 
 
 class VectorStore:
@@ -11,45 +29,55 @@ class VectorStore:
         self.text_chunks = []
         self.index = faiss.IndexFlatL2(384)
 
+    # Add text chunks to FAISS index
     def add_texts(self, texts):
-        embeddings = model.encode(texts)
+        embeddings = embedding_model.encode(texts)
         self.index.add(np.array(embeddings))
         self.text_chunks.extend(texts)
 
+    # Search similar chunks
     def search(self, query, k=4):
         if len(self.text_chunks) == 0:
             return ["No resume uploaded yet."]
-        query_embedding = model.encode([query])
+        query_embedding = embedding_model.encode([query])
         distances, indices = self.index.search(np.array(query_embedding), k)
         return [self.text_chunks[i] for i in indices[0]]
 
 
+# Global vector store instance
 vector_store = VectorStore()
 
-# Answer generator
+# -------------------------------
+# LLM Response Generator
+# -------------------------------
+
+
+def generate_llm_response(prompt):
+    result = generator(prompt, max_length=120, num_return_sequences=1)
+    return result[0]["generated_text"]
+
+# -------------------------------
+# Main Answer Function
+# -------------------------------
 
 
 def generate_answer(query):
+    # Retrieve relevant context
     context = " ".join(vector_store.search(query))
-    query_lower = query.lower()
 
-    if "summary" in query_lower:
-        return f"Professional Summary:\n{context[:400]}..."
+    # Prompt for LLM
+    prompt = f"""
+You must answer ONLY using the context.
 
-    elif "skill" in query_lower:
-        return f"Key Skills:\n{context[:400]}..."
+If answer not found say "Not found".
 
-    elif "education" in query_lower:
-        return f"Education Details:\n{context[:400]}..."
+Context:
+{context}
 
-    elif "experience" in query_lower:
-        return f"Experience:\n{context[:400]}..."
+Question:
+{query}
 
-    elif "strength" in query_lower:
-        return "Strengths include strong technical background and project experience."
+Answer:
+"""
 
-    elif "weakness" in query_lower:
-        return "Areas to improve include adding certifications and measurable achievements."
-
-    else:
-        return f"Relevant Information:\n{context[:400]}..."
+    return generate_llm_response(prompt)
